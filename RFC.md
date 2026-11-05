@@ -1,6 +1,6 @@
 # Draft RFC: Checker-Name Arguments for `[[clang::suppress]]` in the Static Analyzer
 
-This proposal makes the Clang Static Analyzer (CSA) honor the string arguments of `[[clang::suppress("...")]]`, interpreting each argument as a checker name or checker package, so that users can silence one checker in a range instead of every checker.
+We propose changing the Clang Static Analyzer (CSA) to honor the string arguments of `[[clang::suppress("...")]]`, interpreting each argument as a checker name or checker package, so that users can silence one checker in a range instead of every checker.
 
 ```cpp
 [[clang::suppress("core.NullDereference")]]
@@ -29,7 +29,12 @@ Today `[[clang::suppress]]` is all-or-nothing in CSA. A bare `[[clang::suppress]
 * This RFC does not define a shared naming or matching scheme for all tools. The unified checker naming scheme and labels are discussed separately (see [Open Questions](#open-questions)), and nothing here should make a shared scheme harder to build later.
 
 ## Design
+### Why checker names?
 
+Clang's builtin diagnostics each have a stable identity. Every diagnostic is declared centrally in the `Diagnostic*.td`files, gets a diagnostic ID, and belongs to named groups (`-Wunused-variable`, `-Wformat`).
+The Static Analyzer has no equivalent for individual diagnostics. Each checker constructs its own `BugType` (the checker name plus a free-form description and category string) and emits free-form message strings at the report site. There is no stable per-diagnostic ID and there are no diagnostic groups. The description and message text are user-facing prose that often embeds program-specific details and changes freely, so they are not suitable identifiers. The checker is the finest-grained unit that CSA declares and names stably. Users enable and disable analysis with `-analyzer-checker=` and `-analyzer-disable-checker=`, using checker names and packages. 
+Choosing checker names therefore makes suppression granularity match enablement granularity. A user who can turn a checker on by name can silence it by the same name.
+The limitation is that one checker may emit several different kinds of report, and this design cannot silence one kind without silencing the others. Finer granularity would need a stable per-diagnostic identifier in CSA, which is a much larger change to how checkers declare their reports. That work is out of scope here, but this design does not rule it out.
 ### Semantics
 
 A suppression argument is either a full checker name (`core.NullDereference`) or a checker package (`core`). A package argument matches every checker in that package. Matching works on whole dot-separated components, the same way `-analyzer-checker=` does. Argument strings are always read as CSA checker names or packages.
@@ -65,10 +70,9 @@ Clang diagnostics solve this with stable diagnostic IDs plus a list of previous 
 
 * **`-analyzer-config` suppression files.** This would add yet another way to configure suppressions and would not fix the actual problem: users already write `[[clang::suppress("name")]]` and expect it to work, and today it suppresses nothing. A config file would also be disconnected from the code and break under refactoring.
 * **Raw string-prefix matching.** Rejected: `unix.Malloc` would match `unix.MallocSizeof`, which would surprise users.
-* **Teach CSA to honor `NOLINT` instead.** This would not fix the existing expectation that `[[clang::suppress("name")]]` works, since the parameterized attribute would still suppress nothing. Possible and probably worthwhile separately, but this RFC is about CSA's own mechanism, and the attribute already exists and is already honored in its bare form.
-
+* **Teach CSA to honor `NOLINT` instead.** clang-tidy suppresses diagnostics with special source comments. `// NOLINT` silences clang-tidy diagnostics on that line. CSA could recognize the same comments. We rejected this as the solution to the problem in this RFC, for the following reason: CSA already supports the bare `[[clang::suppress]]` attribute. Adding checker names to it extends an existing mechanism, while `NOLINT` would add a second, comment-based mechanism to CSA beside it. Honoring `NOLINT` in CSA may still be worthwhile, for example so that code already annotated for clang-tidy needs no changes. That is a separate proposal.
 ## Open Questions
 
 1. **Unknown names.** Should `suppress("typo.Checker")` produce a diagnostic? A CSA-side "unused/unknown suppression" note is possible but out of scope here.
-2. **Non-checker identifiers ("hashtags").** The original FIXME also mentions hashtag-style categories (for example `#security`). These are also known as checker labels, and are being discussed in [Labels and limiting labels of checkers](https://discourse.llvm.org/t/feature-labels-and-limiting-labels-of-checkers/91309). This proposal covers checker names only; categories can be layered on later with a distinct syntax that cannot collide with dotted names.
+2. **Checker categories.** The original FIXME in `BugSuppression.cpp` also mentions hashtag-style categories (for example `#performance`). These are also known as checker labels and would name a group of checkers that isn't tied to any specific checker name. They are being discussed in [Labels and limiting labels of checkers](https://discourse.llvm.org/t/feature-labels-and-limiting-labels-of-checkers/91309). This RFC doesn't cover them. A category is less precise than a checker name, and one category can span many checkers, so a suppression could silence warnings the user didn't intend to hide. Any future category mechanism would need to be designed and justified separately.
 3. **Unified checker naming scheme.** Should the tools converge on one stable checker naming scheme? `clang::suppress` is meant to work across the Clang tools, but CSA checker names (`core.NullDereference`), clang-tidy check names (`bugprone-foo`) and builtin `-W` groups use different schemes. This RFC accepts CSA checker names and packages only. Whether the tools converge on one stable naming scheme, and how renames and moves between packages are handled, is out of scope here.
