@@ -23,9 +23,9 @@ Today `[[clang::suppress]]` is all-or-nothing in CSA. A bare `[[clang::suppress]
 
 ## Scope
 
-This proposal covers the Clang Static Analyzer only. CSA is the only Clang-based tool that currently honors `clang::suppress`. The Clang Static Analysis Working Group has suggested that clang-tidy and Clang's builtin diagnostics should support it too, and we discuss that in [Future Work](#future-work). The design allows for this because the attribute takes string names for what to suppress, and those strings could be interpreted by other tools. This proposal does not define a naming or matching scheme shared by all tools.
+This proposal covers the Clang Static Analyzer only. CSA is the only Clang-based tool that currently honors `clang::suppress`. The Clang Static Analysis Working Group has suggested that clang-tidy and Clang's compiler warnings should support it too, and we discuss that in [Future Work](#future-work). The design allows for this because the attribute takes string names for what to suppress, and those strings could be interpreted by other tools. This proposal does not define a naming or matching scheme shared by all tools.
 
-For context, builtin diagnostics are currently suppressed with `#pragma clang diagnostic push` / `ignored "-Wfoo"` / `pop`, and clang-tidy uses `NOLINT`, `NOLINTNEXTLINE` and `NOLINTBEGIN`/`NOLINTEND` comments. Neither reads `clang::suppress`. Clang warnings that clang-tidy forwards go through the same `NOLINT` path.
+For context, compiler warnings are currently suppressed with `#pragma clang diagnostic push` / `ignored "-Wfoo"` / `pop`, and clang-tidy uses `NOLINT`, `NOLINTNEXTLINE` and `NOLINTBEGIN`/`NOLINTEND` comments. Neither reads `clang::suppress`. Clang warnings that clang-tidy forwards go through the same `NOLINT` path.
 
 ## Design
 ### Why checker names?
@@ -54,11 +54,11 @@ Checker names become part of users' source code once they appear in suppressions
 
 clang-tidy has no rename-specific handling. The text inside `NOLINT(...)` is parsed into a `CachedGlobList`, and a diagnostic is suppressed if `ChecksGlob->contains(DiagName)`, where `DiagName` is the single name the diagnostic was emitted under. Matching is a plain glob (`*` is the only wildcard) against that string. There is no lookup of "previous names".
 
-So in clang-tidy, `NOLINT` stays valid across a rename only while users stay on the old name. It is not an explicit guarantee, and there is no tooling to find stale `NOLINT`s.
+So in clang-tidy, a `NOLINT` written with a check's old name stops working once the user upgrades to a clang-tidy version where the check has been renamed, and the diagnostic reappears. Updating the `NOLINT` to the new name fixes it for the new version, but then it no longer matches in older versions. clang-tidy does not guarantee any behavior here, and it has no tooling to find `NOLINT`s that refer to names that no longer exist.
 
 #### This proposal
 
-CSA checker names have the same exposure. A rename, or a move between packages such as graduating out of `alpha`, would break suppressions written with the old name, and package arguments (`suppress("pkgA")`) stop matching a checker once it moves to `pkgB`. This proposal does not handle renames; see [Future Work](#future-work).
+CSA checker names have the same exposure. A rename, or a move between packages such as graduating out of `alpha`, would break suppressions written with the old name. Package arguments (`suppress("pkgA")`) would also stop matching a checker once it moves to `pkgB`. Clang diagnostics avoid this by keeping a list of previous IDs, so suppressions written against an old ID still match the new one. CSA could adopt a similar list of previous checker names. Handling renames and package moves is out of scope for this proposal and is left as future work.
 
 ### Backward Compatibility
 
@@ -75,7 +75,6 @@ CSA checker names have the same exposure. A rename, or a move between packages s
 This proposal is deliberately limited to checker names in CSA. Several extensions could build on it without changing its syntax.
 
 * **Other tools.** Make `clang::suppress` work in clang-tidy and for builtin Clang diagnostics, as suggested by the Clang Static Analysis Working Group. Each tool would interpret the string arguments with its own names (`bugprone-foo`, `-Wfoo`). A shared naming and matching scheme across tools, including stable checker names, is a separate design question.
-* **Checker renames and moves.** Clang diagnostics keep a list of previous IDs, so suppressions written against an old ID still match the new one. A similar list of previous names could keep suppressions working when a checker is renamed or moves between packages (for example, graduating out of `alpha`, or moving from `unix` to `core`).
 * **Suppression hygiene.** Warn when an argument names no known checker (`suppress("typo.Checker")`) or matches no report. Separately, support justifications: the C++ Core Guidelines spell it `[[gsl::suppress("tag", justification: "message")]]`, which Clang doesn't implement, and adding it to `clang::suppress` would need new argument parsing that fits awkwardly with a variadic string list.
 * **Checker categories.** The FIXME in `BugSuppression.cpp` also mentions hashtag-style categories. These are also known as checker labels and would name a group of checkers not tied to a specific checker name; they are being discussed in [Labels and limiting labels of checkers](https://discourse.llvm.org/t/feature-labels-and-limiting-labels-of-checkers/91309). A category is less precise than a checker name, and one category can span many checkers, so a suppression could silence warnings the user didn't intend to hide. Any such mechanism would need separate design and justification.
 * **`NOLINT` in CSA.** Recognizing clang-tidy's `NOLINT` comments in CSA, independently of this proposal.
